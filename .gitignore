@@ -1,3 +1,53 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Credentials
+*.json
+!package.json
+credentials/
+
+
+.git
+
+# Docs
+2604_Decode_Health_DataScience_PlatformEngineer Job Description copy.pdf
+CLAUDE.md
+plan.md
+steps.md
+
+# Ignore synthea hospital source code
+synthea
+
+
+terraform/.terraform
+terraform/*.tfstate*
+
+
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
