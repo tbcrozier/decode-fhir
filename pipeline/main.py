@@ -11,6 +11,8 @@ Usage:
 import argparse
 import json
 import logging
+import os
+import time
 import uuid
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -84,6 +86,9 @@ def run_pipeline(
         batch_size: Number of files to process before loading to BQ
         max_workers: Number of parallel download threads
     """
+    # Track processing start time
+    start_time = time.time()
+
     # Generate unique run ID: YYYYMMDD_HHMMSS_shortUUID
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_id = f"{timestamp}_{uuid.uuid4().hex[:8]}"
@@ -118,6 +123,8 @@ def run_pipeline(
         # Process in batches
         total_loaded = {"patients": 0, "conditions": 0, "observations": 0}
         files_processed = 0
+        files_failed = 0
+        all_observation_dates = []
 
         for batch_start in range(0, len(bundle_files), batch_size):
             batch_files_subset = bundle_files[batch_start:batch_start + batch_size]
@@ -140,8 +147,13 @@ def run_pipeline(
                         records = future.result()
                         all_records.append(records)
                         files_processed += 1
+                        # Collect observation dates for QC
+                        for obs in records.get("observations", []):
+                            if obs.get("effective_date"):
+                                all_observation_dates.append(obs["effective_date"])
                     except Exception as e:
                         logger.error(f"Failed to process {blob_name}: {e}")
+                        files_failed += 1
 
             # Merge and add run metadata
             merged = merge_records(all_records)
@@ -158,6 +170,10 @@ def run_pipeline(
             for table, count in results.items():
                 total_loaded[table] += count
 
+        # Calculate processing duration
+        processing_duration = time.time() - start_time
+        total_records = sum(total_loaded.values())
+
         # Mark run as successful
         loader.complete_run(
             run_id=run_id,
@@ -168,10 +184,25 @@ def run_pipeline(
             status="success"
         )
 
+        # Write QC summary
+        qc_metrics = {
+            "files_processed": files_processed,
+            "files_failed": files_failed,
+            "patients_count": total_loaded["patients"],
+            "conditions_count": total_loaded["conditions"],
+            "observations_count": total_loaded["observations"],
+            "processing_duration_seconds": processing_duration,
+            "records_per_second": total_records / processing_duration if processing_duration > 0 else 0,
+            "observation_date_min": min(all_observation_dates) if all_observation_dates else None,
+            "observation_date_max": max(all_observation_dates) if all_observation_dates else None,
+        }
+        loader.write_qc_summary(run_id, qc_metrics)
+
         # Final summary
         logger.info("Pipeline completed successfully")
         logger.info(f"Run ID: {run_id}")
         logger.info(f"Total loaded: {total_loaded}")
+        logger.info(f"Processing duration: {processing_duration:.2f}s")
 
         # Show final table counts
         final_counts = loader.get_table_counts()
@@ -198,33 +229,37 @@ def main():
     )
     parser.add_argument(
         "--project-id",
-        required=True,
-        help="GCP project ID"
+        default=os.environ.get("PROJECT_ID"),
+        help="GCP project ID (or set PROJECT_ID env var)"
     )
     parser.add_argument(
         "--source-bucket",
-        default="synthea-fhir-decode",
-        help="Source GCS bucket containing FHIR bundles"
+        default=os.environ.get("SOURCE_BUCKET", "synthea-fhir-decode"),
+        help="Source GCS bucket containing FHIR bundles (or set SOURCE_BUCKET env var)"
     )
     parser.add_argument(
         "--source-prefix",
-        default="raw/synthea_tennessee_500/",
-        help="Prefix path within source bucket"
+        default=os.environ.get("SOURCE_PREFIX", "raw/synthea_tennessee_500/"),
+        help="Prefix path within source bucket (or set SOURCE_PREFIX env var)"
     )
     parser.add_argument(
         "--max-files",
         type=int,
-        default=None,
-        help="Limit number of files to process (for testing)"
+        default=int(os.environ.get("MAX_FILES")) if os.environ.get("MAX_FILES") else None,
+        help="Limit number of files to process (or set MAX_FILES env var)"
     )
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=100,
-        help="Number of files to process per batch"
+        default=int(os.environ.get("BATCH_SIZE", "100")),
+        help="Number of files to process per batch (or set BATCH_SIZE env var)"
     )
 
     args = parser.parse_args()
+
+    # Validate required arguments
+    if not args.project_id:
+        parser.error("--project-id is required (or set PROJECT_ID env var)")
 
     run_pipeline(
         project_id=args.project_id,

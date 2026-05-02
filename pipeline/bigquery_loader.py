@@ -211,3 +211,68 @@ class BigQueryLoader:
             deleted[table] = job.num_dml_affected_rows
 
         return deleted
+
+    def write_qc_summary(self, run_id: str, metrics: dict) -> None:
+        """
+        Write QC summary metrics for a pipeline run.
+
+        Args:
+            run_id: Pipeline run identifier
+            metrics: Dict containing:
+                - files_processed: Number of files successfully processed
+                - files_failed: Number of files that failed processing
+                - patients_count: Number of patient records loaded
+                - conditions_count: Number of condition records loaded
+                - observations_count: Number of observation records loaded
+                - processing_duration_seconds: Total processing time
+                - records_per_second: Processing throughput
+                - observation_date_min: Earliest observation date
+                - observation_date_max: Latest observation date
+        """
+        table_id = f"{self.full_dataset_id}.qc_summary"
+
+        # Calculate derived metrics
+        files_processed = metrics.get("files_processed", 0)
+        files_failed = metrics.get("files_failed", 0)
+        total_files = files_processed + files_failed
+        success_rate = (files_processed / total_files * 100) if total_files > 0 else 0
+
+        patients_count = metrics.get("patients_count", 0)
+        conditions_count = metrics.get("conditions_count", 0)
+        observations_count = metrics.get("observations_count", 0)
+
+        conditions_per_patient = (
+            conditions_count / patients_count if patients_count > 0 else 0
+        )
+        observations_per_patient = (
+            observations_count / patients_count if patients_count > 0 else 0
+        )
+
+        qc_record = {
+            "run_id": run_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "files_processed": files_processed,
+            "files_failed": files_failed,
+            "success_rate": success_rate,
+            "patients_count": patients_count,
+            "conditions_count": conditions_count,
+            "observations_count": observations_count,
+            "conditions_per_patient": conditions_per_patient,
+            "observations_per_patient": observations_per_patient,
+            "observation_date_min": metrics.get("observation_date_min"),
+            "observation_date_max": metrics.get("observation_date_max"),
+            "processing_duration_seconds": metrics.get("processing_duration_seconds", 0),
+            "records_per_second": metrics.get("records_per_second", 0),
+        }
+
+        job_config = bigquery.LoadJobConfig(
+            write_disposition="WRITE_APPEND",
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        )
+
+        job = self.client.load_table_from_json(
+            [qc_record],
+            table_id,
+            job_config=job_config
+        )
+        job.result()

@@ -136,6 +136,30 @@ resource "google_bigquery_table" "pipeline_runs" {
   ])
 }
 
+# QC summary table - quality control metrics for each pipeline run
+resource "google_bigquery_table" "qc_summary" {
+  dataset_id          = google_bigquery_dataset.fhir_analytics.dataset_id
+  table_id            = "qc_summary"
+  deletion_protection = false
+
+  schema = jsonencode([
+    { name = "run_id", type = "STRING", mode = "REQUIRED", description = "Pipeline run identifier" },
+    { name = "created_at", type = "TIMESTAMP", mode = "REQUIRED", description = "When this QC summary was created" },
+    { name = "files_processed", type = "INT64", mode = "NULLABLE", description = "Number of files successfully processed" },
+    { name = "files_failed", type = "INT64", mode = "NULLABLE", description = "Number of files that failed processing" },
+    { name = "success_rate", type = "FLOAT64", mode = "NULLABLE", description = "Percentage of files processed successfully" },
+    { name = "patients_count", type = "INT64", mode = "NULLABLE", description = "Total patient records loaded" },
+    { name = "conditions_count", type = "INT64", mode = "NULLABLE", description = "Total condition records loaded" },
+    { name = "observations_count", type = "INT64", mode = "NULLABLE", description = "Total observation records loaded" },
+    { name = "conditions_per_patient", type = "FLOAT64", mode = "NULLABLE", description = "Average conditions per patient" },
+    { name = "observations_per_patient", type = "FLOAT64", mode = "NULLABLE", description = "Average observations per patient" },
+    { name = "observation_date_min", type = "STRING", mode = "NULLABLE", description = "Earliest observation date in dataset" },
+    { name = "observation_date_max", type = "STRING", mode = "NULLABLE", description = "Latest observation date in dataset" },
+    { name = "processing_duration_seconds", type = "FLOAT64", mode = "NULLABLE", description = "Total pipeline processing time" },
+    { name = "records_per_second", type = "FLOAT64", mode = "NULLABLE", description = "Processing throughput" }
+  ])
+}
+
 # -----------------------------------------------------------------------------
 # Service Account for Pipeline
 # -----------------------------------------------------------------------------
@@ -146,10 +170,10 @@ resource "google_service_account" "pipeline" {
   description  = "Service account for running the FHIR data pipeline"
 }
 
-# Grant access to read from source bucket
-resource "google_storage_bucket_iam_member" "pipeline_source_read" {
+# Grant access to read/write to source bucket (read raw data, write generated data)
+resource "google_storage_bucket_iam_member" "pipeline_source_admin" {
   bucket = "synthea-fhir-decode"
-  role   = "roles/storage.objectViewer"
+  role   = "roles/storage.objectAdmin"
   member = "serviceAccount:${google_service_account.pipeline.email}"
 }
 
